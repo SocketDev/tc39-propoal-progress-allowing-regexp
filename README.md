@@ -147,8 +147,8 @@ N/A
 
 **Q**: Why does this need to be built-in, instead of being implemented in JavaScript?
 
-**A**: We could encourage people to continue doing this in user-space. However, that would significantly increase load time of web pages. Additionally, web browsers already have a built-in frobnicator which is higher quality.
+**A**: We could encourage people to continue doing this in user-space. However, that would significantly increase load time of web pages. Additionally, web browsers already have a built-in RegExp engine which is higher quality.
 
 **Q**: Is it really necessary to create such a high-level built-in construct, rather than using lower-level primitives?
 
-**A**: Instead of providing a direct `frobnicate` method, we could expose more basic primitives to compose an md5 hash with rot13. However, rot13 was demonstrated to be insecure in 2012 (citation), so exposing it as a primitive could serve as a footgun.
+**A**: Yes, low level constructs and book keeping are the general source of the issue and don't allow for the same fidelity of results as well as preventing some desirable behaviors due to reflection.
