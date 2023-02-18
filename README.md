@@ -8,11 +8,11 @@ Stage: -1
 
 ## Motivation
 
-JS RegExp requires a full input to perform a match. Common JS idioms include streaming and async chunked I/O. This means that for streaming inputs that come in chunks, any input that does not create a match may potentially need to be buffered and concatenated. Even when a match is found, it is unsafe to slice the string due to a variety of reasons.
+JS RegExp requires complete input to perform a match. Common JS idioms include streaming and async chunked I/O. This means that for streaming inputs that come in chunks, any input that does not create a match may potentially need to be buffered and concatenated. Even when a match is found, it is unsafe to slice the string due to a variety of reasons.
 
 ### Motivating Examples
 
-The goal of this proposal is to solve the variety of scenarios listed here.
+The goal of this proposal is to address the scenarios listed here.
 
 The standard workflow of a stream of data from JS I/O can be imagined as follows. Showing a problem once chunking is involved using current RegExp methods:
 
@@ -26,7 +26,7 @@ async function* stream() {
 for await (const chunk of stream()) {
   chunk.matchAll(pattern) // never matches
 }
-// but if we buffer
+// but if we buffer...
 let buffer = ''
 for await (const chunk of stream()) {
   buffer += chunk
@@ -39,37 +39,56 @@ This leads to a few direct effects:
 * Bloated memory usage due to inability to GC chunks
 * Underutilized CPU during I/O idle
 * Needing to create extra ticks just to append strings to no effect
-* Loss of RegExp matching state on each search
+* Loss of pattern matching state on each search
 
 This also has some indirect effects:
 
-#### Complexity of false negatives with lone surrogates / in-progress quantifiers
-
-Surrogates are a simple form, but even things like removing `/ab+/g` has problems with chunking.
+#### False negatives
 
 ```mjs
 const fire_surrogates = '🔥'.split('')
-const emoji_pattern = /.../g
-const non_emoji_str = ''
-for (const chunk of fire_surrogates) {
-  non_emoji_str += chunk.replaceAll(emoji_pattern, '')
+const emoji_pattern = /\p{Emoji_Presentation}/gu
+const text_presentation_str = ''
+for await (const chunk of fire_surrogates) {
+  text_presentation_str += chunk.replaceAll(emoji_pattern, '�') // never matches
+}
+```
+
+#### False positives
+
+See [Scunthorpe problem](https://en.wikipedia.org/wiki/Scunthorpe_problem).
+
+```mjs
+const pattern = new RegExp(String.raw`\b(${DIRTY_WORDS.join('|')})\b`, 'gi')
+async function* stream(str, size) {
+  while (str.length) {
+    yield str.slice(0, size)
+    str = str.slice(size)
+  }
+}
+let reject = false;
+for await (const chunk of stream('shitakemushrooms.example.com', 4)) {
+  if (pattern.test(chunk)) {
+    reject = true // misclassifies based on the first chunk
+    break
+  }
 }
 ```
 
 #### Problems parallelizing/caching results
 
-Often for long lived parses it is desirable to save data in a way to reduce re-processing. Existing means to do this are fragile at best and do not work with complex RegExp.
+Often for long lived parses it is desirable to save data in a way that minimizes re-processing. Existing means to do this are fragile at best and do not work with complex patterns.
 
 ```mjs
 const progress_pattern = /(?=$|bc?)/g
 const chunks = 'abc'.split(progress_pattern) // ['a', 'bc']
 // can skip processing for 'a' of 'abc' for future chunks
-// this approach currently isn't possible for complex regexp
+// this approach currently isn't possible for complex patterns
 ```
 
 #### Problem knowing starting range of search
 
-Due to lack of knowledge of lookbehind constant buffering must be used to safely account for it.
+Due to lack of knowledge regarding lookbehind, constant buffering must be used to safely account for it.
 
 ```mjs
 const pattern = /(?<a=)ba/g
@@ -103,11 +122,11 @@ for (const chunk of chunks) {
 
 ## Use cases
 
-**Streaming resource utilization**: when doing I/O in JS it often comes that data is streamed in chunks, from websockets, HTTP requests, file I/O, etc. Doing so helps to allow forward progress while waiting on I/O allowing CPU pressure and memory pressure to be spread out during I/O gaps. RegExp should be able to be account for streaming in a way that allows forward progress as well as releaving memory pressure.
+**Streaming resource utilization**: Data is often streamed to JS in chunks from websockets, HTTP messages, file reading, etc. This generally supports forward progress while waiting on I/O, spreading out CPU and memory pressure during gaps. RegExp should be able to effectively participate in such processes.
 
-**Streaming data boundaries**: when processing chunked data RegExp should allow for handling patterns around data boundaries in a way that prevents false positives or negatives from having incomplete data.
+**Streaming data boundaries**: When processing chunked data, RegExp should allow for handling patterns around data boundaries in a way that prevents false positives or false negatives on incomplete data.
 
-**Text manipulation pattern**: when performing matching, it can be valuable to know if a chunk of data will potentially be used in a future match and if so what parts. This can aid in various text manipulation or viewing that requires scanning a full text of a document by allowing it to be split up into discrete chunks and processed async/in parallel.
+**Text manipulation pattern**: When performing matching, it can be valuable to know if a chunk of data will potentially be used in a future match and if so what parts. This can aid in various text manipulation or viewing use cases by allowing complete text to be chunked and processed async/in parallel.
 
 ## Comparison
 
@@ -151,4 +170,4 @@ N/A
 
 **Q**: Is it really necessary to create such a high-level built-in construct, rather than using lower-level primitives?
 
-**A**: Yes, low level constructs and book keeping are the general source of the issue and don't allow for the same fidelity of results as well as preventing some desirable behaviors due to reflection.
+**A**: Low level constructs and book keeping are the general source of the issues and don't allow for the same fidelity of results or robust handling of edge cases.
